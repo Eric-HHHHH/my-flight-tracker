@@ -91,8 +91,6 @@ if "run" not in st.session_state: st.session_state.run = False
 # --- UI 介面 ---
 st.title("✈️ 航班動態看板")
 
-# 將原本的 Sidebar 改為置中的展開面板 (Expander)
-# 當開始監控時，面板會自動收合，讓出螢幕空間給數據
 with st.expander("⚙️ 點擊展開/收攏設定控制台", expanded=not st.session_state.run):
     view_mode = st.radio("顯示模式", ["💻 表格 (適合電腦)", "📱 卡片 (適合手機)"], horizontal=True)
     
@@ -101,11 +99,11 @@ with st.expander("⚙️ 點擊展開/收攏設定控制台", expanded=not st.se
         selected_date = st.date_input("選擇監控日期 (依出發地時間)", datetime.now(DEFAULT_TZ).date())
         st.caption("🔄 自動更新頻率：每 10 分鐘一次")
     with col2:
-        inputs = st.text_area("航班編號 (每行一個)", "CI705\nBR225\nCX705", height=100)
+        # 這裡補回了遺漏的 .split('\n')
+        inputs = st.text_area("航班編號 (每行一個)", "CI705\nBR225\nCX705", height=100).split('\n')
     
     flights_list = [f.strip().upper() for f in inputs if f.strip()][:10]
     
-    # 滿版大按鈕，方便單手大拇指點擊
     c1, c2 = st.columns(2)
     if c1.button("🚀 開始監控", use_container_width=True, type="primary"): st.session_state.run = True
     if c2.button("🛑 停止監控", use_container_width=True): st.session_state.run = False
