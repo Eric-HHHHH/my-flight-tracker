@@ -7,14 +7,11 @@ from zoneinfo import ZoneInfo
 
 st.set_page_config(page_title="Flight Radar Dashboard", layout="wide")
 
-# 預設時區防呆
 DEFAULT_TZ = ZoneInfo("Asia/Manila")
 
 def format_time_by_tz(ts, tz_name):
-    """將 Unix Timestamp 轉換為指定機場的當地時間"""
     if not ts: return "-"
     try:
-        # 根據機場的時區動態轉換時間
         tz = ZoneInfo(tz_name) if tz_name else DEFAULT_TZ
         return datetime.fromtimestamp(ts, tz).strftime("%Y-%m-%d %H:%M")
     except Exception:
@@ -29,7 +26,6 @@ def get_flight_data(flight_no, target_date):
     
     current_time_str = datetime.now(DEFAULT_TZ).strftime("%H:%M:%S")
     
-    # 維持你原本要求的精確欄位名稱
     def empty_row(status_msg):
         return {
             "航班": flight_no,
@@ -58,7 +54,6 @@ def get_flight_data(flight_no, target_date):
             compare_ts = sched_dep_ts if sched_dep_ts else sched_arr_ts
             if not compare_ts: continue
             
-            # 以出發地時區來判定使用者選擇的日期
             orig_tz = f.get('airport', {}).get('origin', {}).get('timezone', {}).get('name')
             check_tz = ZoneInfo(orig_tz) if orig_tz else DEFAULT_TZ
             
@@ -69,7 +64,6 @@ def get_flight_data(flight_no, target_date):
         
         if not target_flight: return empty_row("📅 該日無航班")
             
-        # --- 解析機場與時區 ---
         orig_data = target_flight.get('airport', {}).get('origin', {})
         dest_data = target_flight.get('airport', {}).get('destination', {})
         
@@ -79,19 +73,14 @@ def get_flight_data(flight_no, target_date):
         orig_tz_name = orig_data.get('timezone', {}).get('name') if orig_data else None
         dest_tz_name = dest_data.get('timezone', {}).get('name') if dest_data else None
 
-        # --- 解析時間 ---
         time_data = target_flight.get('time', {})
-        
         sched_dep_ts = time_data.get('scheduled', {}).get('departure')
         sched_arr_ts = time_data.get('scheduled', {}).get('arrival')
-        
         real_dep_ts = time_data.get('real', {}).get('departure') or time_data.get('estimated', {}).get('departure')
         real_arr_ts = time_data.get('real', {}).get('arrival') or time_data.get('estimated', {}).get('arrival')
 
-        # 分別套用出發地與目的地的當地時間
         str_sched_dep = f"[{orig_code}] {format_time_by_tz(sched_dep_ts, orig_tz_name)}" if sched_dep_ts else "-"
         str_sched_arr = f"[{dest_code}] {format_time_by_tz(sched_arr_ts, dest_tz_name)}" if sched_arr_ts else "-"
-        
         str_real_dep = f"[{orig_code}] {format_time_by_tz(real_dep_ts, orig_tz_name)}" if real_dep_ts else "依表定時間"
         str_real_arr = f"[{dest_code}] {format_time_by_tz(real_arr_ts, dest_tz_name)}" if real_arr_ts else "依表定時間"
         
@@ -121,6 +110,11 @@ if "run" not in st.session_state: st.session_state.run = False
 
 with st.sidebar:
     st.header("控制台")
+    
+    # 新增顯示模式切換
+    view_mode = st.radio("🖥️ 顯示模式", ["💻 表格模式 (適合電腦)", "📱 卡片模式 (適合手機)"])
+    st.divider()
+    
     selected_date = st.date_input("選擇監控日期 (依出發地時間)", datetime.now(DEFAULT_TZ).date())
     
     inputs = st.text_area("航班編號 (每行一個)", "CI705\nBR225\nCX705").split('\n')
@@ -140,7 +134,18 @@ if st.session_state.run:
             df = pd.DataFrame(data)
             
         with placeholder.container():
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            # 根據使用者選擇的模式渲染不同 UI
+            if "表格模式" in view_mode:
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                # 手機版卡片式 UI (使用 container 加上邊框)
+                for index, row in df.iterrows():
+                    with st.container(border=True):
+                        st.markdown(f"### ✈️ {row['航班']} &nbsp; | &nbsp; {row['狀態']}")
+                        st.markdown(f"**🛫 起飛:** <br> 表定：{row['表定起飛']} <br> 實際：{row['實際/預計起飛']}", unsafe_allow_html=True)
+                        st.markdown(f"**🛬 抵達:** <br> 表定：{row['表定抵達']} <br> 實際：{row['實際/預計抵達']}", unsafe_allow_html=True)
+                        st.caption(f"最後更新: {row['最後更新']}")
+
             next_update = (datetime.now(DEFAULT_TZ).timestamp() + 600)
             next_update_str = datetime.fromtimestamp(next_update, DEFAULT_TZ).strftime('%H:%M:%S')
             st.success(f"數據同步完成。下一次更新時間：{next_update_str}")
