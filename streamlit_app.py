@@ -151,4 +151,4 @@ if st.session_state.run:
         # 倒數 600 秒
         for _ in range(600):
             if not st.session_state.run: break
-            time.sleep(
+            time.sleep(1)
