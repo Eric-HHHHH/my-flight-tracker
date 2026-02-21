@@ -1,47 +1,67 @@
 import streamlit as st
 import pandas as pd
 import time
+import requests
 from datetime import datetime
-from FlightRadar24 import FlightRadar24API
+from zoneinfo import ZoneInfo
 
 st.set_page_config(page_title="Flight Radar Dashboard", layout="wide")
-fr_api = FlightRadar24API()
 
-def get_flight_status(flight_no):
+# 強制設定為當地時區 (UTC+8)
+TZ = ZoneInfo("Asia/Manila")
+
+def get_flight_data(flight_no):
+    # 使用 FlightRadar24 的內部輕量 API 端點
+    url = f"https://api.flightradar24.com/common/v1/flight/list.json?query={flight_no}&fetchBy=flight&page=1&limit=1"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+    }
+    
+    current_time = datetime.now(TZ).strftime("%H:%M:%S")
+    
     try:
-        # 搜尋航班，FlightRadar24 的搜尋非常精準
-        flights = fr_api.get_flights(flight_number=flight_no)
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return {"航班": flight_no, "狀態": "❌ 請求遭阻擋", "預計抵達": "-", "最後更新": current_time}
+            
+        data = res.json()
+        # 解析 JSON 結構
+        flights = data.get('result', {}).get('response', {}).get('data', [])
         
         if not flights:
-            return {"航班": flight_no, "狀態": "🔍 未起飛或無資訊", "預計抵達": "-", "最後更新": datetime.now().strftime("%H:%M:%S")}
+            return {"航班": flight_no, "狀態": "🔍 查無近期航班", "預計抵達": "-", "最後更新": current_time}
         
-        # 取得最相關的一個航班資訊
         flight = flights[0]
-        details = fr_api.get_flight_details(flight)
+        status_text = flight.get('status', {}).get('text', '未知')
         
-        # 解析狀態與抵達時間
-        status_text = details.get('status', {}).get('text', '未知')
-        # 取得預計抵達時間 (通常為 Unix Timestamp，轉換為當地時間)
-        eta_ts = details.get('time', {}).get('estimated', {}).get('arrival')
-        if eta_ts:
-            eta = datetime.fromtimestamp(eta_ts).strftime("%H:%M")
+        # 取得抵達時間戳記 (優先取預計 arrival，若無則取表定 arrival)
+        time_data = flight.get('time', {})
+        arr_ts = time_data.get('estimated', {}).get('arrival') or time_data.get('scheduled', {}).get('arrival')
+        
+        if arr_ts:
+            # 將 Unix Timestamp 轉換為當地時間
+            arr_time = datetime.fromtimestamp(arr_ts, TZ).strftime("%m-%d %H:%M")
         else:
-            eta = "確認中"
-
-        # 判斷有無延誤 (簡單邏輯判斷)
+            arr_time = "未知"
+            
+        # 標記延誤狀態
         if "Delayed" in status_text:
             status = f"⚠️ {status_text}"
+        elif "Canceled" in status_text:
+            status = f"🚫 {status_text}"
         else:
             status = f"✅ {status_text}"
-
+            
         return {
-            "航班": flight_no, 
-            "狀態": status, 
-            "預計抵達": eta, 
-            "最後更新": datetime.now().strftime("%H:%M:%S")
+            "航班": flight_no,
+            "狀態": status,
+            "預計抵達": arr_time,
+            "最後更新": current_time
         }
-    except Exception:
-        return {"航班": flight_no, "狀態": "🔌 連線異常", "預計抵達": "-", "最後更新": datetime.now().strftime("%H:%M:%S")}
+        
+    except Exception as e:
+        return {"航班": flight_no, "狀態": "🔌 連線異常", "預計抵達": "-", "最後更新": current_time}
 
 # --- UI 介面 ---
 st.title("✈️ 專業版航班監控 Dashboard")
@@ -50,7 +70,6 @@ if "run" not in st.session_state: st.session_state.run = False
 
 with st.sidebar:
     st.header("控制台")
-    # 預設放入 Eric 常用的航班編號或示範編號
     inputs = st.text_area("航班編號 (每行一個)", "CI705\nBR225\nBR281").split('\n')
     flights_list = [f.strip().upper() for f in inputs if f.strip()][:10]
     
@@ -58,21 +77,23 @@ with st.sidebar:
     if col1.button("🚀 開始監控"): st.session_state.run = True
     if col2.button("🛑 停止"): st.session_state.run = False
     
-    st.info(f"當前位置：菲律賓宿霧\n自動更新頻率：10 分鐘")
+    st.info("自動更新頻率：10 分鐘")
 
 # --- 執行監控 ---
 placeholder = st.empty()
 if st.session_state.run:
     while st.session_state.run:
-        with st.spinner("正在同步全球航班數據..."):
-            data = [get_flight_status(f) for f in flights_list]
+        with st.spinner("正在同步航班數據..."):
+            data = [get_flight_data(f) for f in flights_list]
             df = pd.DataFrame(data)
             
         with placeholder.container():
             st.dataframe(df, use_container_width=True, hide_index=True)
-            st.success(f"數據同步完成。下一次更新時間：{datetime.now().strftime('%H:%M:%S')} (10分鐘後)")
+            next_update = (datetime.now(TZ).timestamp() + 600)
+            next_update_str = datetime.fromtimestamp(next_update, TZ).strftime('%H:%M:%S')
+            st.success(f"數據同步完成。下一次更新時間：{next_update_str}")
         
-        # 倒數計時並允許隨時暫停
+        # 倒數 600 秒
         for _ in range(600):
             if not st.session_state.run: break
             time.sleep(1)
