@@ -71,4 +71,85 @@ def get_flight_data(flight_no, target_date):
             
         # --- 解析機場與時區 ---
         orig_data = target_flight.get('airport', {}).get('origin', {})
-        dest_data = target_flight.get
+        dest_data = target_flight.get('airport', {}).get('destination', {})
+        
+        orig_code = orig_data.get('code', {}).get('iata', '???') if orig_data else '???'
+        dest_code = dest_data.get('code', {}).get('iata', '???') if dest_data else '???'
+        
+        orig_tz_name = orig_data.get('timezone', {}).get('name') if orig_data else None
+        dest_tz_name = dest_data.get('timezone', {}).get('name') if dest_data else None
+
+        # --- 解析時間 ---
+        time_data = target_flight.get('time', {})
+        
+        sched_dep_ts = time_data.get('scheduled', {}).get('departure')
+        sched_arr_ts = time_data.get('scheduled', {}).get('arrival')
+        
+        real_dep_ts = time_data.get('real', {}).get('departure') or time_data.get('estimated', {}).get('departure')
+        real_arr_ts = time_data.get('real', {}).get('arrival') or time_data.get('estimated', {}).get('arrival')
+
+        # 分別套用出發地與目的地的當地時間
+        str_sched_dep = f"[{orig_code}] {format_time_by_tz(sched_dep_ts, orig_tz_name)}" if sched_dep_ts else "-"
+        str_sched_arr = f"[{dest_code}] {format_time_by_tz(sched_arr_ts, dest_tz_name)}" if sched_arr_ts else "-"
+        
+        str_real_dep = f"[{orig_code}] {format_time_by_tz(real_dep_ts, orig_tz_name)}" if real_dep_ts else "依表定時間"
+        str_real_arr = f"[{dest_code}] {format_time_by_tz(real_arr_ts, dest_tz_name)}" if real_arr_ts else "依表定時間"
+        
+        status_text = target_flight.get('status', {}).get('text', '未知')
+        if "Delayed" in status_text: status = f"⚠️ {status_text}"
+        elif "Canceled" in status_text: status = f"🚫 {status_text}"
+        elif "Landed" in status_text: status = f"🏁 {status_text}"
+        else: status = f"✅ {status_text}"
+            
+        return {
+            "航班": flight_no,
+            "狀態": status,
+            "表定起飛": str_sched_dep,
+            "表定抵達": str_sched_arr,
+            "實際/預計起飛": str_real_dep,
+            "實際/預計抵達": str_real_arr,
+            "最後更新": current_time_str
+        }
+        
+    except Exception as e:
+        return empty_row("🔌 連線異常")
+
+# --- UI 介面 ---
+st.title("✈️ 專業版航班監控 Dashboard")
+
+if "run" not in st.session_state: st.session_state.run = False
+
+with st.sidebar:
+    st.header("控制台")
+    selected_date = st.date_input("選擇監控日期 (依出發地時間)", datetime.now(DEFAULT_TZ).date())
+    
+    inputs = st.text_area("航班編號 (每行一個)", "CI705\nBR225\nCX705").split('\n')
+    flights_list = [f.strip().upper() for f in inputs if f.strip()][:10]
+    
+    col1, col2 = st.columns(2)
+    if col1.button("🚀 開始監控"): st.session_state.run = True
+    if col2.button("🛑 停止"): st.session_state.run = False
+    
+    st.info("自動更新頻率：10 分鐘")
+
+placeholder = st.empty()
+if st.session_state.run:
+    while st.session_state.run:
+        with st.spinner(f"正在同步 {selected_date.strftime('%Y-%m-%d')} 的航班數據..."):
+            data = [get_flight_data(f, selected_date) for f in flights_list]
+            df = pd.DataFrame(data)
+            
+        with placeholder.container():
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            next_update = (datetime.now(DEFAULT_TZ).timestamp() + 600)
+            next_update_str = datetime.fromtimestamp(next_update, DEFAULT_TZ).strftime('%H:%M:%S')
+            st.success(f"數據同步完成。下一次更新時間：{next_update_str}")
+        
+        for _ in range(600):
+            if not st.session_state.run: break
+            time.sleep(1)
+            
+        if st.session_state.run:
+            st.rerun()
+else:
+    st.info("請設定日期並點擊左側「開始監控」以獲取即時數據。")
